@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scope 3 Commute Calculator</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* --- Global Variables & Reset --- */
+        :root {
+            --primary-color: #2e7d32;
+            --primary-hover: #1b5e20;
+            --bg-color: #f0f4f8;
+            --card-bg: #ffffff;
+            --text-main: #334155;
+            --text-muted: #64748b;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color); color: var(--text-main);
+            height: 100vh; /* Fills screen height */
+            box-sizing: border-box;
+            overflow: hidden; /* Prevents whole-page scrolling */
+        }
+
+        /* --- Dashboard Layout --- */
+        .dashboard-container {
+            display: flex; gap: 20px; padding: 20px;
+            height: 100vh; box-sizing: border-box;
+        }
+
+        /* Forms Sidebar (Scrollable) */
+        .sidebar {
+            flex: 0 0 380px; display: flex; flex-direction: column;
+            gap: 20px; overflow-y: auto; padding-right: 10px;
+            height: 100%;
+        }
+
+        /* Visuals Main Area (Non-Scrollable Flex Column) */
+        .visuals-area {
+            flex: 1; display: flex; flex-direction: column;
+            gap: 20px; height: 100%;
+        }
+
+        .header h1 { margin: 0 0 5px 0; color: var(--primary-color); font-size: 1.8rem; }
+        .header p { margin: 0; color: var(--text-muted); font-size: 0.95rem; }
+
+        /* --- UI Cards --- */
+        .card {
+            background: var(--card-bg); padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            margin-top: 0; font-size: 1.15rem;
+            border-bottom: 2px solid var(--bg-color); padding-bottom: 8px; margin-bottom: 15px;
+        }
+
+        /* --- Form Elements --- */
+        label {
+            display: block; font-weight: 600;
+            margin-top: 12px; margin-bottom: 4px; font-size: 0.85rem;
+        }
+
+        input[type="text"], input[type="number"], select {
+            width: 100%; padding: 8px 10px;
+            border: 1px solid #cbd5e1; border-radius: 6px;
+            font-size: 0.95rem; box-sizing: border-box;
+        }
+
+        button {
+            width: 100%; background-color: var(--primary-color); color: white;
+            border: none; padding: 10px; border-radius: 6px;
+            font-size: 1rem; font-weight: bold; cursor: pointer;
+            margin-top: 15px; transition: background-color 0.2s;
+        }
+
+        button:hover { background-color: var(--primary-hover); }
+
+        .results-box {
+            margin-top: 15px; padding-top: 10px;
+            border-top: 1px dashed #cbd5e1; display: none;
+            font-size: 0.9rem;
+        }
+        .results-box p { margin: 5px 0; }
+
+        /* --- Map Wrapper (Smaller Height) --- */
+        .map-section {
+            flex: 0 0 35%; /* Fixed 35% height of container */
+            border-radius: 12px; overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 2px solid var(--card-bg); position: relative;
+        }
+        #map { height: 100%; width: 100%; }
+
+        /* --- Chart Wrapper (Fills remaining height) --- */
+        .chart-section {
+            flex: 1; display: flex; flex-direction: column;
+            visibility: hidden; /* Hidden until calculated, but space is reserved */
+        }
+        .chart-container {
+            flex: 1; position: relative; width: 100%;
+        }
+
+        /* --- Mobile Responsiveness --- */
+        @media (max-width: 950px) {
+            body { overflow: auto; height: auto; }
+            .dashboard-container { flex-direction: column; height: auto; }
+            .sidebar { flex: none; width: 100%; height: auto; overflow: visible; }
+            .visuals-area { flex: none; width: 100%; height: auto; }
+            .map-section { height: 300px; flex: none; }
+            .chart-section { height: 400px; flex: none; visibility: visible; }
+            #chart-card { display: block; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <aside class="sidebar">
+        <div class="header">
+            <h1>EcoCommute</h1>
+            <p>Scope 3 Emissions Calculator</p>
+        </div>
+
+        <div class="card" id="baseline-form">
+            <h2>1. Baseline Commute</h2>
+            
+            <label>Home Address:</label>
+            <input type="text" id="home-addr" placeholder="Start typing home address...">
+            
+            <label>Work Address:</label>
+            <input type="text" id="work-addr" placeholder="Start typing work address...">
+
+            <label>Days in Office (per week):</label>
+            <input type="number" id="base-days" value="5" min="1" max="7">
+            
+            <label>Working Weeks per Year:</label>
+            <input type="number" id="base-weeks" value="48" min="1" max="52">
+
+            <label style="display: flex; align-items: center; gap: 8px; margin-top: 15px;">
+                <input type="checkbox" id="include-wfh" checked style="width: auto; padding: 0; margin: 0;">
+                Include WFH Emissions
+            </label>
+
+            <label>Vehicle Year:</label>
+            <select id="base-year" onchange="loadMakes(this.value, 'base')"><option>Loading...</option></select>
+
+            <label>Vehicle Make:</label>
+            <select id="base-make" onchange="loadModels(document.getElementById('base-year').value, this.value, 'base')"><option>Select Year First</option></select>
+
+            <label>Vehicle Model:</label>
+            <select id="base-model" onchange="loadOptions(document.getElementById('base-year').value, document.getElementById('base-make').value, this.value, 'base')"><option>Select Make First</option></select>
+
+            <label>Vehicle Trim/Engine:</label>
+            <select id="base-option" onchange="loadVehicleMpg(this.value, 'base')"><option>Select Model First</option></select>
+
+            <label>Baseline MPG (Editable):</label>
+            <input type="number" id="base-mpg" placeholder="Waiting for selection...">
+
+            <button onclick="calculateBaseline()">Set Baseline</button>
+            <div id="base-results" class="results-box"></div>
+        </div>
+
+        <div class="card" id="scenario-form">
+            <h2>2. New Scenario</h2>
+            
+            <label>New Days in Office:</label>
+            <input type="number" id="scenario-days" value="2" min="1" max="7">
+
+            <label>New Vehicle Year:</label>
+            <select id="scenario-year" onchange="loadMakes(this.value, 'scenario')"><option>Loading...</option></select>
+
+            <label>New Vehicle Make:</label>
+            <select id="scenario-make" onchange="loadModels(document.getElementById('scenario-year').value, this.value, 'scenario')"><option>Select Year First</option></select>
+
+            <label>New Vehicle Model:</label>
+            <select id="scenario-model" onchange="loadOptions(document.getElementById('scenario-year').value, document.getElementById('scenario-make').value, this.value, 'scenario')"><option>Select Make First</option></select>
+
+            <label>New Vehicle Trim/Engine:</label>
+            <select id="scenario-option" onchange="loadVehicleMpg(this.value, 'scenario')"><option>Select Model First</option></select>
+
+            <label>New MPG (Editable):</label>
+            <input type="number" id="scenario-mpg" placeholder="Waiting for selection...">
+
+            <button onclick="calculateScenario()">Compare Savings</button>
+            <div id="scenario-results" class="results-box"></div>
+        </div>
+    </aside>
+
+    <main class="visuals-area">
+        <section class="map-section">
+            <div id="map"></div>
+        </section>
+
+        <section class="card chart-section" id="chart-card">
+            <h2>Visual Impact Comparison</h2>
+            <div class="chart-container">
+                <canvas id="impactChart"></canvas>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+    // --- Constants & State ---
+    const CO2E_PER_GALLON = 8.87; // kg CO2e (includes CH4, N2O EPA factors)
+    const WFH_CO2E_PER_DAY = 3.2; // kg CO2e (avg daily home energy emissions)
+    const GAS_PRICE = 3.50; // $ per gallon
+    let baselineData = { distancePerDay: 0, emissions: 0, cost: 0, timePerYear: 0, workingWeeks: 48, includeWfh: true, baseDays: 5 };
+    let impactChartInstance = null; 
+    
+    // --- Google Maps Variables ---
+    let map, directionsService, directionsRenderer;
+
+    function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+            center: { lat: 39.8283, lng: -98.5795 },
+            zoom: 4,
+            mapTypeControl: false,
+            streetViewControl: false, // Clean up UI
+        });
+
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer();
+        directionsRenderer.setMap(map);
+
+        new google.maps.places.Autocomplete(document.getElementById('home-addr'));
+        new google.maps.places.Autocomplete(document.getElementById('work-addr'));
+        
+        loadYears('base');
+        loadYears('scenario');
+    }
+
+    // --- FuelEconomy API Logic ---
+    const fuelApiBase = 'https://www.fueleconomy.gov/ws/rest/vehicle';
+    const jsonHeaders = { 'Accept': 'application/json' };
+
+    async function loadYears(prefix) {
+        try {
+            const res = await fetch(`${fuelApiBase}/menu/year`, { headers: jsonHeaders });
+            const data = await res.json();
+            populateDropdown(`${prefix}-year`, data.menuItem);
+        } catch (e) { console.error("Fuel API Error", e); }
+    }
+
+    async function loadMakes(year, prefix) {
+        if(!year) return;
+        const res = await fetch(`${fuelApiBase}/menu/make?year=${year}`, { headers: jsonHeaders });
+        const data = await res.json();
+        populateDropdown(`${prefix}-make`, data.menuItem);
+        document.getElementById(`${prefix}-model`).innerHTML = '<option>Select Make First</option>';
+        document.getElementById(`${prefix}-option`).innerHTML = '<option>Select Model First</option>';
+    }
+
+    async function loadModels(year, make, prefix) {
+        if(!make) return;
+        const res = await fetch(`${fuelApiBase}/menu/model?year=${year}&make=${make}`, { headers: jsonHeaders });
+        const data = await res.json();
+        populateDropdown(`${prefix}-model`, data.menuItem);
+        document.getElementById(`${prefix}-option`).innerHTML = '<option>Select Model First</option>';
+    }
+
+    async function loadOptions(year, make, model, prefix) {
+        if(!model) return;
+        const res = await fetch(`${fuelApiBase}/menu/options?year=${year}&make=${make}&model=${model}`, { headers: jsonHeaders });
+        const data = await res.json();
+        populateDropdown(`${prefix}-option`, data.menuItem); 
+    }
+
+    async function loadVehicleMpg(vehicleId, prefix) {
+        if(!vehicleId) return;
+        const res = await fetch(`${fuelApiBase}/${vehicleId}`, { headers: jsonHeaders });
+        const data = await res.json();
+        document.getElementById(`${prefix}-mpg`).value = data.comb08;
+    }
+
+    function populateDropdown(elementId, items) {
+        const select = document.getElementById(elementId);
+        select.innerHTML = '<option value="">Select...</option>';
+        const itemsArray = Array.isArray(items) ? items : [items];
+        itemsArray.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.value; option.textContent = item.text;
+            select.appendChild(option);
+        });
+    }
+
+    // --- Routing & Calculation Logic ---
+    function calculateBaseline() {
+        const home = document.getElementById('home-addr').value;
+        const work = document.getElementById('work-addr').value;
+        const days = parseInt(document.getElementById('base-days').value) || 0;
+        const mpg = parseFloat(document.getElementById('base-mpg').value);
+        const weeks = parseInt(document.getElementById('base-weeks').value) || 48;
+        const includeWfh = document.getElementById('include-wfh').checked;
+
+        if (!home || !work || !mpg) return alert("Please fill out home, work, and vehicle MPG.");
+
+        const request = { origin: home, destination: work, travelMode: 'DRIVING' };
+
+        directionsService.route(request, function(result, status) {
+            if (status == 'OK') {
+                directionsRenderer.setDirections(result);
+
+                const leg = result.routes[0].legs[0];
+                const oneWayMiles = leg.distance.value / 1609.34;
+                const oneWayMins = leg.duration.value / 60;
+                
+                const roundTripMiles = oneWayMiles * 2;
+                const roundTripMins = oneWayMins * 2;
+                
+                // Commuting Math
+                const weeklyMiles = roundTripMiles * days;
+                const weeklyGallons = mpg > 0 ? (weeklyMiles / mpg) : 0;
+                const commuteEmissionsPerWeek = weeklyGallons * CO2E_PER_GALLON;
+                
+                // WFH Math (assuming 5 day standard work week)
+                let wfhEmissionsPerWeek = 0;
+                if (includeWfh) {
+                    const wfhDays = Math.max(0, 5 - days);
+                    wfhEmissionsPerWeek = wfhDays * WFH_CO2E_PER_DAY;
+                }
+
+                const totalEmissionsPerWeek = commuteEmissionsPerWeek + wfhEmissionsPerWeek;
+                
+                // Annualize
+                const annualEmissionsMT = (totalEmissionsPerWeek * weeks) / 1000;
+                const annualCost = weeklyGallons * GAS_PRICE * weeks;
+                const annualTimeMins = roundTripMins * days * weeks;
+                
+                baselineData = {
+                    distancePerDay: roundTripMiles,
+                    baseDays: days,
+                    workingWeeks: weeks,
+                    includeWfh: includeWfh,
+                    emissions: annualEmissionsMT, // MT CO2e
+                    cost: annualCost,
+                    timePerYear: annualTimeMins // in minutes
+                };
+
+                const resBox = document.getElementById('base-results');
+                resBox.style.display = 'block';
+                resBox.innerHTML = `
+                    <p>Round Trip: <strong>${roundTripMiles.toFixed(1)} miles</strong></p>
+                    <p>Annual Emissions: <strong>${baselineData.emissions.toFixed(2)} MT CO₂e</strong></p>
+                    <p>Annual Gas Cost: <strong>$${baselineData.cost.toFixed(2)}</strong></p>
+                    <p>Annual Commute Time: <strong>${(baselineData.timePerYear / 60).toFixed(1)} hours</strong></p>
+                `;
+            } else {
+                alert('Could not calculate route: ' + status);
+            }
+        });
+    }
+
+    function calculateScenario() {
+        if (baselineData.distancePerDay === 0) return alert("Calculate baseline first!");
+
+        const newDays = parseInt(document.getElementById('scenario-days').value) || 0;
+        const newMpg = parseFloat(document.getElementById('scenario-mpg').value);
+        
+        if (!newMpg) return alert("Please select a new vehicle or enter a new MPG.");
+
+        const weeklyMiles = baselineData.distancePerDay * newDays;
+        const weeklyGallons = newMpg > 0 ? (weeklyMiles / newMpg) : 0;
+        const commuteEmissionsPerWeek = weeklyGallons * CO2E_PER_GALLON;
+        
+        // WFH Math
+        let wfhEmissionsPerWeek = 0;
+        if (baselineData.includeWfh) {
+            const wfhDays = Math.max(0, 5 - newDays);
+            wfhEmissionsPerWeek = wfhDays * WFH_CO2E_PER_DAY;
+        }
+
+        const totalEmissionsPerWeek = commuteEmissionsPerWeek + wfhEmissionsPerWeek;
+        
+        // Annualize using baseline weeks
+        const annualEmissionsMT = (totalEmissionsPerWeek * baselineData.workingWeeks) / 1000;
+        const annualCost = weeklyGallons * GAS_PRICE * baselineData.workingWeeks;
+        
+        // Annual time
+        const roundTripMins = baselineData.baseDays > 0 ? (baselineData.timePerYear / (baselineData.baseDays * baselineData.workingWeeks)) : 0;
+        const annualTimeMins = roundTripMins * newDays * baselineData.workingWeeks;
+
+        const resBox = document.getElementById('scenario-results');
+        resBox.style.display = 'block';
+        resBox.innerHTML = `
+            <p>Emissions Saved: <strong>${(baselineData.emissions - annualEmissionsMT).toFixed(2)} MT CO₂e/yr</strong> 📉</p>
+            <p>Money Saved: <strong>$${(baselineData.cost - annualCost).toFixed(2)}/yr</strong> 💰</p>
+            <p>Time Saved: <strong>${((baselineData.timePerYear - annualTimeMins) / 60).toFixed(1)} hrs/yr</strong> ⏱️</p>
+        `;
+
+        // Draw the Chart!
+        drawChart(
+            baselineData.emissions, annualEmissionsMT,
+            baselineData.cost, annualCost,
+            baselineData.timePerYear / 60, annualTimeMins / 60
+        );
+    }
+
+    // --- Chart.js Logic ---
+    function drawChart(baseEmissions, scenEmissions, baseCost, scenCost, baseTime, scenTime) {
+        // Unhide the chart card
+        document.getElementById('chart-card').style.visibility = 'visible';
+
+        const ctx = document.getElementById('impactChart').getContext('2d');
+
+        if (impactChartInstance) {
+            impactChartInstance.destroy();
+        }
+
+        impactChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Annual Emissions (MT CO₂e)', 'Annual Fuel Cost ($)', 'Annual Time (Hours)'],
+                datasets: [
+                    {
+                        label: 'Baseline',
+                        data: [baseEmissions, baseCost, baseTime],
+                        backgroundColor: '#64748b',
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'New Scenario',
+                        data: [scenEmissions, scenCost, scenTime],
+                        backgroundColor: '#2e7d32',
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false, // Essential to fill flex container
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+</script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyASfZ_sKJKz_D3UhcAp9h5boregb2Pjths&libraries=places&callback=initMap" async defer></script>
+
+</body>
+</html>
